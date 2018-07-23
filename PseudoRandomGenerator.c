@@ -41,11 +41,90 @@ void spc_make_fd_nonblocking(int fd){
 }
 
 /*
-	
+	Open /dev/random and /dev/urandom with open() function.
+	Need to open /dev/random on two file descriptors, one blocking and the other
+	is not, so that wemay avoid race conditions where spc_keygen()expects a 
+	function to be non blocking but spc_entropy() has set the descriptorto blocking in
+	other thread.
 */
 void spc_rand_init(){
 	spc_devrand_fd=open("/dev/random", O_RDONLY);
 	spc_devrand_fd_noblock=open("/dev/random", O_RDONLY);
 	spc_devurand_fd=open("/dev/urandom", O_RDONLY);
 
+	if(spc_devrand_fd==-1 && spc_devrand_fd_noblock==-1){
+		perror("spc_rand_init() failed to open /dev/random.");
+		exit(-1);
+	}
+	if(spc_devurand_fd==-1){
+		perror("spc_rand_init() failed to open /dev/urandom.");
+		exit(-1);
+	}
+	//send non_blocking file descriptor to make_nonblock()
+	spc_make_fd_nonblocking(spc_devrand_fd_noblock);
+}//end of spc_rand_init()
+
+/*
+	
+*/
+unsigned char *spc_rand(unsigned char *buf, size_t nbytes){
+	ssize_t r;
+	unsigned char *where=buf;
+
+	if(spc_devrand_fd==-1 && spc_devrand_fd_noblock==-1 && spc_devurand_fd==-1){
+		spc_rand_init();
+	}
+	while(nbytes){
+		if((r=read(spc_devurand_fd,where,nbytes))==-1){
+			if(errno==EINTR) continue;
+			perror("spc_rand couldn't read from /dev/urandom.");
+			exit(-1);
+		}
+		where+=r;
+		nbytes-=r;
+	}
+	return buf;
+}
+
+/*
+	Seeds /dev/random and /dev/urandom to generate random numbers
+*/
+unsigned char *spc_keygen(unsigned char *buf, size_t nbytes){
+	ssize_t r;
+	unsigned char *where=buf;
+
+	if(spc_devrand_fd==-1 && spc_devrand_fd_noblock==-1 && spc_devurand_fd==-1){
+		spc_rand_init();
+	}
+	while(nbytes){
+		if((r=read(spc_devrand_fd_noblock,where,nbytes))==-1){
+			if(errno==EINTR) continue;
+			if(errno==EAGAIN) break;
+			perror("spc_rand couldn't read from /dev/random.");
+			exit(-1);
+		}
+		where+=r;
+		nbytes-=r;
+	}
+	spc_rand(where,nbytes);
+	return buf;
+}
+
+unsigned char *spc_entropy(unsigned char *buf, size_t nbytes){
+	ssize_t r;
+	unsigned char *where=buf;
+
+	if(spc_devrand_fd==-1 && spc_devrand_fd_noblock==-1 && spc_devurand_fd==-1){
+		spc_rand_init();
+	}
+	while(nbytes){
+		if((r=read(spc_devrand_fd,(void*)where,nbytes))==-1){
+			if(errno==EINTR) continue;
+			perror("spc_rand couldn't read from /dev/random.");
+			exit(-1);
+		}
+		where+=r;
+		nbytes-=r;
+	}
+	return buf;
 }
